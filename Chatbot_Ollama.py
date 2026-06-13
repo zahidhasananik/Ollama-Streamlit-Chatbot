@@ -1,16 +1,21 @@
 import streamlit as st
+import os
 # Core components from langchain_core:
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.callbacks import BaseCallbackHandler 
 
-# Community integrations from langchain_community:
+# Community integrations (Ollama এবং OpenAI/Groq এর জন্য আলাদা ইমপোর্ট)
 from langchain_community.chat_models import ChatOllama 
-# Note: No 'from langchain.callbacks.base...' or 'from langchain.prompts...'
+from langchain_openai import ChatOpenAI
 
-# --- 1. MODEL AND INITIALIZATION ---
-OLLAMA_MODEL = 'llama3:8b' # Must match the model you pulled with 'ollama pull'
+# --- 1. CONFIGURATION & ENVIRONMENT CHECK ---
+OLLAMA_MODEL = 'llama3:8b' # লোকাল মেশিনের জন্য
+CLOUD_MODEL = 'llama3-8b-8192' # ক্লাউড (Groq) এর জন্য
 ASSISTANT_NAME = "ZAHID"
+
+# চেক করা হচ্ছে অ্যাপটি ক্লাউডে (Hugging Face) আছে নাকি আপনার নিজের পিসিতে আছে
+is_hf_cloud = "GROQ_API_KEY" in os.environ
 
 # System instruction for the prompt template
 SYSTEM_INSTRUCTION = (
@@ -22,7 +27,6 @@ SYSTEM_INSTRUCTION = (
 # Define the Prompt Template structure
 prompt_template = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_INSTRUCTION),
-    # The history placeholder will be filled by the chat history
     ("placeholder", "{history}"),
     ("human", "{user_input}"),
 ])
@@ -32,24 +36,43 @@ prompt_template = ChatPromptTemplate.from_messages([
 # Initialize chat history for display
 if "messages" not in st.session_state:
     st.session_state["messages"] = [
-        {"role": "assistant", "content": f"Hello! I am {ASSISTANT_NAME}, powered by a local model. How can I assist with your questions?"}
+        {"role": "assistant", "content": f"Hello! I am {ASSISTANT_NAME}, powered by a hybrid LLM setup. How can I assist with your questions?"}
     ]
 
 # Initialize the model connector (cached for performance)
 @st.cache_resource
-def get_ollama_model():
-    # ChatOllama connects to the local Ollama server (default port 11434)
-    try:
-        return ChatOllama(model=OLLAMA_MODEL, streaming=True)
-    except Exception as e:
-        st.error(f"Error connecting to Ollama: {e}. Ensure Ollama is running and model '{OLLAMA_MODEL}' is pulled.")
-        st.stop()
+def get_llm_model():
+    if is_hf_cloud:
+        # ক্লাউড সেটআপ: Groq API এবং LangChain-এর ChatOpenAI ক্লায়েন্ট ব্যবহার হবে
+        try:
+            api_key = os.environ.get("GROQ_API_KEY")
+            return ChatOpenAI(
+                base_url="https://api.groq.com/openai/v1",
+                api_key=api_key,
+                model=CLOUD_MODEL,
+                streaming=True
+            )
+        except Exception as e:
+            st.error(f"Error connecting to Cloud Provider (Groq): {e}")
+            st.stop()
+    else:
+        # লোকাল সেটআপ: আপনার পিসির লোকাল Ollama ব্যবহার করা হবে
+        try:
+            return ChatOllama(model=OLLAMA_MODEL, streaming=True)
+        except Exception as e:
+            st.error(f"Error connecting to Ollama: {e}. Ensure Ollama is running and model '{OLLAMA_MODEL}' is pulled.")
+            st.stop()
 
 # --- 3. DISPLAY THE CHAT INTERFACE ---
 
-st.set_page_config(page_title=f"{ASSISTANT_NAME} Chatbot (Ollama)")
-st.title(f"🤖 {ASSISTANT_NAME} Local LLM Chatbot")
-st.caption(f"Powered by {OLLAMA_MODEL}")
+st.set_page_config(page_title=f"{ASSISTANT_NAME} Chatbot")
+st.title(f"🤖 {ASSISTANT_NAME} Intelligent Chatbot")
+
+# লাইভ স্ট্যাটাস ইন্ডিকেটর
+if is_hf_cloud:
+    st.caption(f"⚡ Status: Running on Cloud via Groq ({CLOUD_MODEL})")
+else:
+    st.caption(f"💻 Status: Running on Local Machine via Ollama ({OLLAMA_MODEL})")
 
 # Display all user-visible messages
 for message in st.session_state.messages:
@@ -58,7 +81,7 @@ for message in st.session_state.messages:
 
 # --- 4. HANDLE NEW USER INPUT ---
 
-if prompt := st.chat_input("Ask Zahid a  question..."):
+if prompt := st.chat_input("Ask Zahid a question..."):
     # 4a. Add and display user message
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -66,7 +89,6 @@ if prompt := st.chat_input("Ask Zahid a  question..."):
 
     # 4b. Prepare history for the prompt
     history = []
-    # Loop through all messages *except* the first welcome message
     for msg in st.session_state.messages[1:-1]:
         if msg["role"] == "user":
             history.append(HumanMessage(content=msg["content"]))
@@ -84,11 +106,11 @@ if prompt := st.chat_input("Ask Zahid a  question..."):
             user_input=prompt
         )
         
-        # Call the Ollama model and stream the response
+        # Call the appropriate model and stream the response
         try:
-            llm = get_ollama_model()
+            llm = get_llm_model()
             
-            # This handles the streaming output from the model
+            # Handles the streaming output from the model (Ollama/Groq দুইটার জন্যই লুপ এক থাকবে)
             for chunk in llm.stream(formatted_prompt):
                 full_response += chunk.content
                 message_placeholder.markdown(full_response + "▌") # Use ▌ for typing indicator
@@ -100,9 +122,13 @@ if prompt := st.chat_input("Ask Zahid a  question..."):
             st.session_state.messages.append({"role": "assistant", "content": full_response})
             
         except Exception as e:
-            st.error(f"**[Error]** Failed to communicate with Ollama server. Is Ollama running? Details: {e}")
+            if is_hf_cloud:
+                st.error(f"**[Error]** Cloud model failed to respond. Details: {e}")
+            else:
+                st.error(f"**[Error]** Failed to communicate with Ollama server. Is Ollama running? Details: {e}")
 
 # --- 5. OPTIONAL: CLEAR HISTORY ---
 if st.sidebar.button("Clear Chat History"):
     st.session_state.messages = [st.session_state.messages[0]]
+    st.rerun()on_state.messages[0]]
     st.rerun()
