@@ -7,3 +7,5 @@ Secure & 100% offline conversational AI dashboard featuring real-time stream tok
 - **Zero-Cloud Dependency:** Fully executed on local runtimes protecting sensitive prompt data from external leakage vectors.
 - **Dynamic Parameter Tuning:** Implemented responsive sidebar states managing Temperature variances and customized System Prompt roles during active sessions.
 - **Optimized Memory Management:** Managed conversation context structures using Streamlit Session States to prevent token overflows.
+
+- The project Link- https://huggingface.co/spaces/Anik694/anik-chatbot
